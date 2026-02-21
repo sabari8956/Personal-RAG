@@ -81,6 +81,10 @@ a {
   backdrop-filter: blur(6px);
 }
 
+.social-mobile {
+  display: none;
+}
+
 .social-link {
   border: 1px solid var(--line-strong);
   border-radius: 999px;
@@ -443,36 +447,75 @@ select {
     width: 94vw;
     min-height: auto;
     gap: 14px;
+    padding-bottom: 170px;
   }
 
   .center-stack {
     align-content: start;
-    padding-top: 20px;
+    padding-top: 4px;
   }
 
   .home-center h1 {
     font-size: 1.25rem;
   }
 
+  .chat-widget {
+    gap: 8px;
+  }
+
   .messages {
-    min-height: 220px;
-    max-height: 45vh;
+    min-height: 240px;
+    max-height: 52vh;
   }
 
   .bubble {
     max-width: 96%;
   }
 
+  .chat-form {
+    position: fixed;
+    left: 3vw;
+    right: 3vw;
+    bottom: calc(env(safe-area-inset-bottom) + 8px);
+    z-index: 30;
+    border-radius: 14px;
+    padding: 9px;
+    gap: 6px;
+    box-shadow:
+      0 -4px 20px rgba(20, 24, 33, 0.1),
+      0 6px 20px rgba(20, 24, 33, 0.1);
+  }
+
+  .chat-form textarea {
+    min-height: 44px;
+  }
+
   .form-row {
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
+    align-items: center;
   }
 
   .prompt-variants {
     gap: 6px;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    padding-bottom: 2px;
+  }
+
+  .prompt-variants::-webkit-scrollbar {
+    display: none;
+  }
+
+  .prompt-variants-label {
+    display: none;
   }
 
   .prompt-variant-btn {
     font-size: 0.74rem;
+    white-space: nowrap;
+    flex: 0 0 auto;
   }
 
   .admin-grid {
@@ -486,5 +529,38 @@ select {
   .social-dock {
     right: 12px;
     bottom: 12px;
+    display: none;
+  }
+
+  .social-mobile {
+    display: grid;
+    gap: 10px;
+    margin-top: 2px;
+    padding: 12px;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: var(--surface);
+  }
+
+  .social-mobile p {
+    margin: 0;
+    color: var(--muted);
+    font-size: 0.8rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  .social-mobile-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .social-mobile-grid .social-link {
+    text-align: center;
+    border-radius: 12px;
+    padding: 9px 6px;
+    font-size: 0.72rem;
+    white-space: nowrap;
   }
 }

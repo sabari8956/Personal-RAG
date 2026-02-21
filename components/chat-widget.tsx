@@ -22,13 +22,27 @@ const HISTORY_KEY = "rag_gateway_history_v1";
 const MAX_HISTORY = 20;
 const CONTEXT_WINDOW = 12;
 const PROMPT_PREVIEWS = [
-  "What is Sabari building right now?",
-  "Give me a sharp intro for Sabari in 3 lines.",
-  "Which project best shows Sabari's product thinking?",
-  "What are Sabari's strongest technical skills?",
+  "Who is Sabari?",
+  "What does Sabari do?",
+  "What does sudosapient mean?",
+  "How to connect with Sabari?",
+  "Tell me the best thing you like about Sabari.",
 ];
-const STARTER_MESSAGE =
-  "Hey, I am Sabari's digital sidekick. Ask me about his projects, thinking, and journey, and I will connect the dots with context.";
+const STARTER_MESSAGES = [
+  "Hey, I am Sabari's sidekick. Ask me anything.",
+  "Welcome in. Let's decode Sabari together.",
+  "Curious about Sabari? Fire away.",
+  "Ask me about Sabari. I have the inside scoop.",
+  "Let's talk Sabari, projects, and big ideas.",
+];
+
+function pickStarterMessage(): string {
+  return STARTER_MESSAGES[Math.floor(Math.random() * STARTER_MESSAGES.length)];
+}
+
+function isStarterMessage(content: string): boolean {
+  return STARTER_MESSAGES.includes(content);
+}
 
 function createSessionId(): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
@@ -145,10 +159,11 @@ export function ChatWidget() {
 
     const queueStarterMessage = (delayMs: number) => {
       clearStarterTimer();
+      const selectedStarter = pickStarterMessage();
       starterTimerRef.current = window.setTimeout(() => {
         setMessages((previous) =>
           previous.length === 0
-            ? [buildMessage("assistant", STARTER_MESSAGE, true)]
+            ? [buildMessage("assistant", selectedStarter, true)]
             : previous,
         );
         starterTimerRef.current = null;
@@ -170,15 +185,14 @@ export function ChatWidget() {
         const hasUserMessages = restored.some((message) => message.role === "user");
         const hasAssistantReplyBeyondStarter = restored.some(
           (message, index) =>
-            message.role === "assistant" &&
-            (index !== 0 || message.content !== STARTER_MESSAGE),
+            message.role === "assistant" && (index !== 0 || !isStarterMessage(message.content)),
         );
 
         if (
           hasUserMessages &&
           !hasAssistantReplyBeyondStarter &&
           restored[0]?.role === "assistant" &&
-          restored[0].content === STARTER_MESSAGE
+          isStarterMessage(restored[0].content)
         ) {
           restored = restored.slice(1);
         }
@@ -357,10 +371,11 @@ export function ChatWidget() {
     sessionStorage.removeItem(HISTORY_KEY);
     setSessionId(newSession);
     setMessages([]);
+    const selectedStarter = pickStarterMessage();
     starterTimerRef.current = window.setTimeout(() => {
       setMessages((previous) =>
         previous.length === 0
-          ? [buildMessage("assistant", STARTER_MESSAGE, true)]
+          ? [buildMessage("assistant", selectedStarter, true)]
           : previous,
       );
       starterTimerRef.current = null;

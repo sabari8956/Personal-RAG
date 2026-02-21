@@ -1,22 +1,30 @@
-import Link from "next/link";
-
 import { ChatWidget } from "@/components/chat-widget";
 
 const SOCIAL_LINKS = [
-  { label: "Twitter", href: "https://twitter.com/your-handle" },
-  { label: "LinkedIn", href: "https://www.linkedin.com/in/your-handle" },
-  { label: "Instagram", href: "https://www.instagram.com/your-handle" },
+  { label: "X / Twitter", href: "https://x.com/Sabari_8956" },
+  { label: "Instagram", href: "https://www.instagram.com/sabari_kannan_4444/" },
+  { label: "LinkedIn", href: "https://www.linkedin.com/in/sabari8956/" },
 ];
 
 export default function Home() {
   return (
     <main className="home-shell">
-      <header className="top-nav">
-        <span className="brand">Let&apos;s get to know Sabari</span>
-        <Link href="/admin" className="link-btn">
-          Admin
-        </Link>
-      </header>
+      <section className="social-mobile" aria-label="Social links">
+        <p>Find Sabari on</p>
+        <div className="social-mobile-grid">
+          {SOCIAL_LINKS.map((social) => (
+            <a
+              key={social.label}
+              href={social.href}
+              target="_blank"
+              rel="noreferrer"
+              className="social-link"
+            >
+              {social.label}
+            </a>
+          ))}
+        </div>
+      </section>
       <section className="center-stack">
         <div className="home-center">
           <h1>Ask me anything about Sabari.</h1>
