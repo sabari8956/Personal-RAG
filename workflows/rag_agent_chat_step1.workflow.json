@@ -52,7 +52,7 @@
         "promptType": "define",
         "text": "={{ $json.query }}",
         "options": {
-          "systemMessage": "You are a RAG assistant for personal and company conversations. Use Qdrant Vector Store tool to retrieve knowledge for factual questions. If retrieval does not provide enough data, say you do not have enough indexed information."
+          "systemMessage": "You are a RAG assistant for personal and company conversations. Always use the Qdrant Vector Store tool for factual questions. Keep every reply short: exactly 2 or 3 sentences total, no bullet points. If retrieval is insufficient, clearly say you do not have enough indexed information. End with one brief follow-up question to invite the next user question."
         }
       },
       "id": "647e58d1-6ca0-46ad-95f6-c10708971790",

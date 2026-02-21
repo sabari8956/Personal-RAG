@@ -53,7 +53,7 @@ const workflow = {
         text: '={{ $json.query }}',
         options: {
           systemMessage:
-            'You are a RAG assistant for personal and company conversations. Use Qdrant Vector Store tool to retrieve knowledge for factual questions. If retrieval does not provide enough data, say you do not have enough indexed information.',
+            'You are a RAG assistant for personal and company conversations. Always use the Qdrant Vector Store tool for factual questions. Keep every reply short: exactly 2 or 3 sentences total, no bullet points. If retrieval is insufficient, clearly say you do not have enough indexed information. End with one brief follow-up question to invite the next user question.',
         },
       },
       id: id(),
