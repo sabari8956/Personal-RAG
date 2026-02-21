@@ -1,0 +1,87 @@
+{
+  "name": "rag_admin_maintenance_webhook",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "rag-admin",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        320
+      ],
+      "id": "8999d2ea-951e-4ad8-9d36-db0a7efcac4f",
+      "name": "Webhook Admin"
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\n\nfunction getHeader(headers, key) {\n  if (!headers) return '';\n  const value = headers[key] ?? headers[key.toLowerCase()] ?? headers[key.toUpperCase()];\n  if (Array.isArray(value)) return value[0] || '';\n  return value || '';\n}\n\nfunction normalizeHeaders(headers) {\n  const out = {};\n  Object.entries(headers || {}).forEach(([k, v]) => {\n    out[String(k).toLowerCase()] = Array.isArray(v) ? String(v[0] || '') : String(v || '');\n  });\n  return out;\n}\n\nfunction timingSafeEqual(a, b) {\n  const left = Buffer.from(String(a));\n  const right = Buffer.from(String(b));\n  if (left.length !== right.length) return false;\n  return crypto.timingSafeEqual(left, right);\n}\n\nasync function requestJson(url, init) {\n  const response = await fetch(url, init);\n  const text = await response.text();\n  let payload;\n  try {\n    payload = text ? JSON.parse(text) : {};\n  } catch {\n    payload = { raw: text };\n  }\n  if (!response.ok) {\n    const err = new Error('HTTP ' + response.status + ' from ' + url);\n    err.statusCode = response.status;\n    err.details = payload;\n    throw err;\n  }\n  return payload;\n}\n\nasync function run() {\n  const incoming = $input.first();\n  const envelope = incoming.json || {};\n  const headers = normalizeHeaders(envelope.headers || {});\n  const body = envelope.body && typeof envelope.body === 'object' ? envelope.body : {};\n  const traceId = getHeader(headers, 'x-rag-trace-id') || body.trace_id || crypto.randomUUID();\n\n  try {\n    const secret = process.env.N8N_WEBHOOK_SHARED_SECRET || '';\n    if (!secret) {\n      const err = new Error('N8N_WEBHOOK_SHARED_SECRET is not set');\n      err.statusCode = 500;\n      err.code = 'MISSING_SECRET';\n      throw err;\n    }\n\n    const timestamp = getHeader(headers, 'x-rag-timestamp');\n    const nonce = getHeader(headers, 'x-rag-nonce');\n    const method = (getHeader(headers, 'x-rag-method') || envelope.method || 'POST').toUpperCase();\n    const path = getHeader(headers, 'x-rag-path') || ('/' + String(envelope.path || '').replace(/^\\/+/, ''));\n    const bodySha = getHeader(headers, 'x-rag-body-sha256');\n    const metaSha = getHeader(headers, 'x-rag-meta-sha256');\n    const signature = getHeader(headers, 'x-rag-signature');\n\n    if (!timestamp || !nonce || !bodySha || !metaSha || !signature) {\n      const err = new Error('Missing signature headers');\n      err.statusCode = 401;\n      err.code = 'MISSING_SIGNATURE_HEADERS';\n      throw err;\n    }\n\n    const canonical = ['v1', timestamp, nonce, method, path, bodySha, metaSha].join('\\n');\n    const expected = 'v1=' + crypto.createHmac('sha256', secret).update(canonical).digest('hex');\n\n    if (!timingSafeEqual(signature, expected)) {\n      const err = new Error('Invalid webhook signature');\n      err.statusCode = 401;\n      err.code = 'INVALID_SIGNATURE';\n      throw err;\n    }\n\n    const action = typeof body.action === 'string' ? body.action.trim().toLowerCase() : '';\n    const docId = typeof body.doc_id === 'string' ? body.doc_id.trim() : '';\n    if (!action || !docId) {\n      const err = new Error('action and doc_id are required');\n      err.statusCode = 400;\n      err.code = 'INVALID_REQUEST';\n      throw err;\n    }\n\n    const qdrantBase = (process.env.QDRANT_URL || '').replace(/\\/$/, '');\n    if (!qdrantBase) {\n      const err = new Error('QDRANT_URL is not configured');\n      err.statusCode = 500;\n      err.code = 'MISSING_QDRANT_URL';\n      throw err;\n    }\n\n    const qdrantCollection = process.env.QDRANT_COLLECTION || 'knowledge_base';\n    const qdrantHeaders = { 'Content-Type': 'application/json' };\n    if (process.env.QDRANT_API_KEY) {\n      qdrantHeaders['api-key'] = process.env.QDRANT_API_KEY;\n    }\n\n    if (action === 'delete') {\n      await requestJson(\n        qdrantBase + '/collections/' + encodeURIComponent(qdrantCollection) + '/points/delete?wait=true',\n        {\n          method: 'POST',\n          headers: qdrantHeaders,\n          body: JSON.stringify({\n            filter: {\n              must: [{ key: 'doc_id', match: { value: docId } }],\n            },\n          }),\n        },\n      );\n\n      return [{\n        json: {\n          statusCode: 200,\n          body: {\n            status: 'deleted',\n            doc_id: docId,\n            trace_id: traceId,\n          },\n        },\n      }];\n    }\n\n    if (action === 'reindex') {\n      const points = [];\n      let offset = null;\n\n      do {\n        const scrollBody = {\n          filter: {\n            must: [{ key: 'doc_id', match: { value: docId } }],\n          },\n          limit: 256,\n          with_payload: true,\n          with_vector: false,\n        };\n        if (offset !== null) {\n          scrollBody.offset = offset;\n        }\n\n        const scrollResponse = await requestJson(\n          qdrantBase + '/collections/' + encodeURIComponent(qdrantCollection) + '/points/scroll',\n          {\n            method: 'POST',\n            headers: qdrantHeaders,\n            body: JSON.stringify(scrollBody),\n          },\n        );\n\n        const batch = Array.isArray(scrollResponse.result?.points)\n          ? scrollResponse.result.points\n          : [];\n        points.push(...batch);\n        offset = scrollResponse.result?.next_page_offset ?? null;\n      } while (offset !== null);\n\n      if (points.length === 0) {\n        return [{\n          json: {\n            statusCode: 404,\n            body: {\n              error: {\n                code: 'DOC_NOT_FOUND',\n                message: 'No vectors found for doc_id',\n                trace_id: traceId,\n              },\n            },\n          },\n        }];\n      }\n\n      const ollamaBase = (process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434').replace(/\\/$/, '');\n      const embedModel = process.env.RAG_EMBED_MODEL || 'nomic-embed-text';\n      const upsertPoints = [];\n\n      for (const point of points) {\n        const payload = point.payload || {};\n        const text = payload.text || payload.chunk || payload.content || '';\n        if (!text || typeof text !== 'string') {\n          continue;\n        }\n\n        const embeddingResponse = await requestJson(ollamaBase + '/api/embeddings', {\n          method: 'POST',\n          headers: { 'Content-Type': 'application/json' },\n          body: JSON.stringify({ model: embedModel, prompt: text }),\n        });\n\n        const vector = embeddingResponse.embedding\n          || (Array.isArray(embeddingResponse.data) && embeddingResponse.data[0] && embeddingResponse.data[0].embedding)\n          || null;\n\n        if (!Array.isArray(vector) || vector.length === 0) {\n          continue;\n        }\n\n        upsertPoints.push({\n          id: point.id,\n          vector,\n          payload: {\n            ...payload,\n            ingested_at: new Date().toISOString(),\n          },\n        });\n      }\n\n      if (upsertPoints.length > 0) {\n        await requestJson(\n          qdrantBase + '/collections/' + encodeURIComponent(qdrantCollection) + '/points?wait=true',\n          {\n            method: 'PUT',\n            headers: qdrantHeaders,\n            body: JSON.stringify({ points: upsertPoints }),\n          },\n        );\n      }\n\n      return [{\n        json: {\n          statusCode: 200,\n          body: {\n            status: 'reindexed',\n            doc_id: docId,\n            points_updated: upsertPoints.length,\n            trace_id: traceId,\n          },\n        },\n      }];\n    }\n\n    const err = new Error('Unsupported action: ' + action);\n    err.statusCode = 400;\n    err.code = 'UNSUPPORTED_ACTION';\n    throw err;\n  } catch (error) {\n    return [{\n      json: {\n        statusCode: Number(error.statusCode || 500),\n        body: {\n          error: {\n            code: error.code || 'ADMIN_ACTION_FAILED',\n            message: error.message || 'Unexpected admin error',\n            trace_id: traceId,\n            details: error.details || undefined,\n          },\n        },\n      },\n    }];\n  }\n}\n\nreturn run();"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        560,
+        320
+      ],
+      "id": "84309cee-e016-4c96-bea3-9b12b49f259b",
+      "name": "Process Admin Action"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json.body}}",
+        "options": {
+          "responseCode": "={{$json.statusCode || 200}}"
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        860,
+        320
+      ],
+      "id": "565a5d7c-56d5-40f1-a655-273c41570e4a",
+      "name": "Respond Admin"
+    }
+  ],
+  "connections": {
+    "Webhook Admin": {
+      "main": [
+        [
+          {
+            "node": "Process Admin Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Admin Action": {
+      "main": [
+        [
+          {
+            "node": "Respond Admin",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "staticData": null,
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "active": false
+}

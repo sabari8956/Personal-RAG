@@ -1,0 +1,360 @@
+{
+  "name": "rag_admin_maintenance_v1",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "rag-admin-maintenance",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "a5f118e9-a8f9-4c18-a8eb-a7b7d22ffe4f",
+      "name": "Webhook Maintenance",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        180,
+        280
+      ],
+      "webhookId": "0792f344-83ed-439a-9ab4-4de8156c9663"
+    },
+    {
+      "parameters": {
+        "jsCode": "const action = String($json.body?.action || '').trim().toLowerCase();\nconst docId = String($json.body?.doc_id || '').trim();\nconst allowed = ['delete', 'reindex', 'wipe_all'];\nif (!allowed.includes(action)) {\n  return [{ json: { statusCode: 400, body: { error: { code: 'INVALID_ACTION', message: 'action must be one of delete, reindex, wipe_all' } } } }];\n}\nif (action !== 'wipe_all' && !docId) {\n  return [{ json: { statusCode: 400, body: { error: { code: 'INVALID_REQUEST', message: 'doc_id is required for delete/reindex' } } } }];\n}\nreturn [{ json: { action, doc_id: docId } }];"
+      },
+      "id": "c3053582-717f-4114-8c73-4624ee145084",
+      "name": "Validate Maintenance Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        420,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "9cf0d64a-f837-4d7a-a17f-a1dfcdf456ec",
+              "leftValue": "={{$json.action}}",
+              "rightValue": "delete",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a9c3ae42-ec65-4d03-9e15-6262624caa44",
+      "name": "Is Delete?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        640,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "d2ccae87-a6ca-46e4-8afb-16f03168838e",
+              "leftValue": "={{$json.action}}",
+              "rightValue": "wipe_all",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "ff250cb7-ba37-41e6-a75f-f51fe2211f9c",
+      "name": "Is Wipe All?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        860,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://qdrant:6333/collections/knowledge_base/points/delete?wait=true",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ filter: { must: [{ key: \"doc_id\", match: { value: $json.doc_id } }] } }) }}",
+        "options": {}
+      },
+      "id": "3600ad0a-e38e-47ad-a045-81761192ff48",
+      "name": "Delete From Qdrant",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        880,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "5e6e1d78-cc6c-4b5e-93e7-29c55270bde6",
+              "name": "status",
+              "value": "deleted",
+              "type": "string"
+            },
+            {
+              "id": "e501206c-7cb5-46fa-97ca-ef69be177294",
+              "name": "doc_id",
+              "value": "={{$(\"Validate Maintenance Request\").item.json.doc_id}}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "5660195b-21de-4c28-9504-2d64748f5e28",
+      "name": "Build Delete Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1110,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://qdrant:6333/collections/knowledge_base/points/delete?wait=true",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ filter: { must: [] } }) }}",
+        "options": {}
+      },
+      "id": "351c8fe5-f1c8-4bc8-99cc-8304d587cd20",
+      "name": "Wipe All From Qdrant",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1110,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "76d554b9-de40-4c08-a4d7-188bb3f4c994",
+              "name": "status",
+              "value": "wiped_all",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "ccf6dcdb-4285-4ab5-9e73-e2686b566f6b",
+      "name": "Build Wipe Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1340,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "2145ed20-37c9-4a6d-ab29-3c30770a8ef1",
+              "name": "status",
+              "value": "reindex_queued",
+              "type": "string"
+            },
+            {
+              "id": "6307a9d4-6eea-41aa-b674-99b583320197",
+              "name": "doc_id",
+              "value": "={{$(\"Validate Maintenance Request\").item.json.doc_id}}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "7944807e-ede1-4d6d-a7ed-277008efa67d",
+      "name": "Build Reindex Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        880,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "caa1736a-27f2-42b9-ad00-fa9b6d76f90d",
+      "name": "Respond Maintenance",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1340,
+        280
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Maintenance": {
+      "main": [
+        [
+          {
+            "node": "Validate Maintenance Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Maintenance Request": {
+      "main": [
+        [
+          {
+            "node": "Is Delete?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Delete?": {
+      "main": [
+        [
+          {
+            "node": "Delete From Qdrant",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Is Wipe All?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Wipe All?": {
+      "main": [
+        [
+          {
+            "node": "Wipe All From Qdrant",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Reindex Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete From Qdrant": {
+      "main": [
+        [
+          {
+            "node": "Build Delete Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wipe All From Qdrant": {
+      "main": [
+        [
+          {
+            "node": "Build Wipe Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Delete Response": {
+      "main": [
+        [
+          {
+            "node": "Respond Maintenance",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Wipe Response": {
+      "main": [
+        [
+          {
+            "node": "Respond Maintenance",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Reindex Response": {
+      "main": [
+        [
+          {
+            "node": "Respond Maintenance",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "staticData": null,
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "active": false
+}

@@ -1,0 +1,190 @@
+{
+  "name": "rag_ingest_webhook",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "rag-ingest",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        220,
+        320
+      ],
+      "id": "b47841c7-c749-4ac7-b6e5-d423eb47e0aa",
+      "name": "Webhook Ingest"
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\n\nfunction getHeader(headers, key) {\n  if (!headers) return '';\n  const value = headers[key] ?? headers[key.toLowerCase()] ?? headers[key.toUpperCase()];\n  if (Array.isArray(value)) return value[0] || '';\n  return value || '';\n}\n\nfunction normalizeHeaders(headers) {\n  const out = {};\n  Object.entries(headers || {}).forEach(([k, v]) => {\n    out[String(k).toLowerCase()] = Array.isArray(v) ? String(v[0] || '') : String(v || '');\n  });\n  return out;\n}\n\nfunction timingSafeEqual(a, b) {\n  const left = Buffer.from(String(a));\n  const right = Buffer.from(String(b));\n  if (left.length !== right.length) return false;\n  return crypto.timingSafeEqual(left, right);\n}\n\nfunction fail(statusCode, code, message, traceId, details) {\n  const err = new Error(message);\n  err.statusCode = statusCode;\n  err.code = code;\n  err.traceId = traceId;\n  err.details = details;\n  throw err;\n}\n\nasync function run() {\n  const incoming = $input.first();\n  const envelope = incoming.json || {};\n  const headers = normalizeHeaders(envelope.headers || {});\n  const traceId = getHeader(headers, 'x-rag-trace-id') || crypto.randomUUID();\n\n  try {\n    const secret = process.env.N8N_WEBHOOK_SHARED_SECRET || '';\n    if (!secret) {\n      fail(500, 'MISSING_SECRET', 'N8N_WEBHOOK_SHARED_SECRET is not set', traceId);\n    }\n\n    const timestamp = getHeader(headers, 'x-rag-timestamp');\n    const nonce = getHeader(headers, 'x-rag-nonce');\n    const method = (getHeader(headers, 'x-rag-method') || envelope.method || 'POST').toUpperCase();\n    const path = getHeader(headers, 'x-rag-path') || ('/' + String(envelope.path || '').replace(/^\\/+/, ''));\n    const bodySha = getHeader(headers, 'x-rag-body-sha256');\n    const metaSha = getHeader(headers, 'x-rag-meta-sha256');\n    const signature = getHeader(headers, 'x-rag-signature');\n\n    if (!timestamp || !nonce || !bodySha || !metaSha || !signature) {\n      fail(401, 'MISSING_SIGNATURE_HEADERS', 'Missing signature headers', traceId);\n    }\n\n    const skewMs = Math.abs(Date.now() - Number(timestamp));\n    const maxSkewMs = Number(process.env.RAG_SIGNATURE_MAX_SKEW_MS || 300000);\n    if (!Number.isFinite(skewMs) || skewMs > maxSkewMs) {\n      fail(401, 'STALE_SIGNATURE', 'Signature timestamp outside allowed window', traceId);\n    }\n\n    const canonical = ['v1', timestamp, nonce, method, path, bodySha, metaSha].join('\\n');\n    const expected = 'v1=' + crypto.createHmac('sha256', secret).update(canonical).digest('hex');\n\n    if (!timingSafeEqual(signature, expected)) {\n      fail(401, 'INVALID_SIGNATURE', 'Invalid webhook signature', traceId);\n    }\n\n    const sourceType = getHeader(headers, 'x-rag-meta-source_type') || 'mixed';\n    const uploadedBy = getHeader(headers, 'x-rag-meta-uploaded_by') || 'admin';\n    const fileName = getHeader(headers, 'x-rag-meta-file_name') || 'upload.pdf';\n    const fileSize = Number(getHeader(headers, 'x-rag-meta-file_size') || 0);\n\n    if (!['personal', 'company', 'mixed'].includes(sourceType)) {\n      fail(400, 'INVALID_SOURCE_TYPE', 'source_type must be personal, company, or mixed', traceId);\n    }\n\n    const binaryKeys = Object.keys(incoming.binary || {});\n    if (binaryKeys.length === 0) {\n      fail(400, 'MISSING_BINARY', 'Webhook did not receive PDF binary data', traceId);\n    }\n\n    const firstBinary = incoming.binary[binaryKeys[0]];\n\n    return [{\n      json: {\n        trace_id: traceId,\n        source_type: sourceType,\n        uploaded_by: uploadedBy,\n        file_name: fileName,\n        file_size: fileSize,\n        uploaded_at: new Date().toISOString(),\n      },\n      binary: {\n        data: firstBinary,\n      },\n    }];\n  } catch (error) {\n    return [{\n      json: {\n        statusCode: Number(error.statusCode || 500),\n        body: {\n          error: {\n            code: error.code || 'INGEST_REQUEST_FAILED',\n            message: error.message || 'Unexpected ingest request error',\n            trace_id: error.traceId || traceId,\n            details: error.details || undefined,\n          },\n        },\n      },\n    }];\n  }\n}\n\nreturn run();"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        320
+      ],
+      "id": "b9332582-e71c-42b9-b984-2951c008b234",
+      "name": "Verify Ingest Request"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "208ffeee-2a19-4a3c-bcf0-fa43271a1544",
+              "leftValue": "={{ $json.statusCode }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        700,
+        320
+      ],
+      "id": "910271f0-c5fb-40e7-a953-704f704a7c7a",
+      "name": "Request Valid?"
+    },
+    {
+      "parameters": {
+        "operation": "pdf",
+        "options": {
+          "joinPages": true
+        }
+      },
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        760,
+        320
+      ],
+      "id": "0fe7c633-0320-419a-82f4-8c0e57df5616",
+      "name": "Extract PDF Text"
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\n\nasync function requestJson(url, init) {\n  const response = await fetch(url, init);\n  const text = await response.text();\n  let payload;\n  try {\n    payload = text ? JSON.parse(text) : {};\n  } catch {\n    payload = { raw: text };\n  }\n  if (!response.ok) {\n    const err = new Error('HTTP ' + response.status + ' from ' + url);\n    err.statusCode = response.status;\n    err.details = payload;\n    throw err;\n  }\n  return payload;\n}\n\nfunction chunkText(text, chunkSize, overlap) {\n  const chunks = [];\n  let start = 0;\n  const normalized = text.replace(/\\r/g, '');\n\n  while (start < normalized.length) {\n    const end = Math.min(start + chunkSize, normalized.length);\n    const slice = normalized.slice(start, end).trim();\n    if (slice.length > 0) chunks.push(slice);\n    if (end >= normalized.length) break;\n    start = end - overlap;\n    if (start < 0) start = 0;\n  }\n\n  return chunks;\n}\n\nfunction extractText(payload) {\n  if (!payload || typeof payload !== 'object') return '';\n  if (typeof payload.text === 'string') return payload.text;\n  if (typeof payload.extractedText === 'string') return payload.extractedText;\n  if (Array.isArray(payload.text)) return payload.text.join('\\n');\n  if (typeof payload.data === 'string') return payload.data;\n  if (Array.isArray(payload.data)) return payload.data.join('\\n');\n  return '';\n}\n\nasync function run() {\n  const item = $input.first();\n  const envelope = item.json || {};\n\n  if (envelope.body && envelope.statusCode) {\n    return [item];\n  }\n\n  const traceId = envelope.trace_id || crypto.randomUUID();\n\n  try {\n    const text = extractText(envelope);\n    if (!text || text.trim().length < 80) {\n      const err = new Error('Unable to extract enough text from PDF (text PDFs only in v1)');\n      err.statusCode = 422;\n      err.code = 'UNPROCESSABLE_PDF_TEXT';\n      throw err;\n    }\n\n    const sourceType = envelope.source_type || 'mixed';\n    const fileName = envelope.file_name || 'upload.pdf';\n    const uploadedBy = envelope.uploaded_by || 'admin';\n    const chunkSize = Number(process.env.RAG_CHUNK_SIZE || 800);\n    const overlap = Number(process.env.RAG_CHUNK_OVERLAP || 120);\n    const chunks = chunkText(text, chunkSize, overlap);\n\n    if (chunks.length === 0) {\n      const err = new Error('No chunks generated from PDF text');\n      err.statusCode = 422;\n      err.code = 'EMPTY_CHUNKS';\n      throw err;\n    }\n\n    const docId = crypto.randomUUID();\n    const ingestedAt = new Date().toISOString();\n    const contentHash = crypto.createHash('sha256').update(text).digest('hex');\n\n    const ollamaBase = (process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434').replace(/\\/$/, '');\n    const qdrantBase = (process.env.QDRANT_URL || '').replace(/\\/$/, '');\n    if (!qdrantBase) {\n      const err = new Error('QDRANT_URL is not configured');\n      err.statusCode = 500;\n      err.code = 'MISSING_QDRANT_URL';\n      throw err;\n    }\n\n    const embedModel = process.env.RAG_EMBED_MODEL || 'nomic-embed-text';\n    const qdrantCollection = process.env.QDRANT_COLLECTION || 'knowledge_base';\n\n    const vectors = [];\n    for (let i = 0; i < chunks.length; i += 1) {\n      const chunk = chunks[i];\n      const embeddingResponse = await requestJson(ollamaBase + '/api/embeddings', {\n        method: 'POST',\n        headers: { 'Content-Type': 'application/json' },\n        body: JSON.stringify({ model: embedModel, prompt: chunk }),\n      });\n\n      const vector = embeddingResponse.embedding\n        || (Array.isArray(embeddingResponse.data) && embeddingResponse.data[0] && embeddingResponse.data[0].embedding)\n        || null;\n\n      if (!Array.isArray(vector) || vector.length === 0) {\n        const err = new Error('Embedding failed for chunk ' + i);\n        err.statusCode = 502;\n        err.code = 'EMBEDDING_FAILED';\n        throw err;\n      }\n\n      vectors.push({\n        id: crypto.randomUUID(),\n        vector,\n        payload: {\n          doc_id: docId,\n          file_name: fileName,\n          source_type: sourceType,\n          chunk_index: i,\n          page_start: null,\n          page_end: null,\n          ingested_at: ingestedAt,\n          uploaded_by: uploadedBy,\n          content_hash: contentHash,\n          text: chunk,\n        },\n      });\n    }\n\n    const qdrantHeaders = { 'Content-Type': 'application/json' };\n    if (process.env.QDRANT_API_KEY) {\n      qdrantHeaders['api-key'] = process.env.QDRANT_API_KEY;\n    }\n\n    const batchSize = Number(process.env.RAG_UPSERT_BATCH_SIZE || 32);\n    for (let i = 0; i < vectors.length; i += batchSize) {\n      const batch = vectors.slice(i, i + batchSize);\n      await requestJson(\n        qdrantBase + '/collections/' + encodeURIComponent(qdrantCollection) + '/points?wait=true',\n        {\n          method: 'PUT',\n          headers: qdrantHeaders,\n          body: JSON.stringify({ points: batch }),\n        },\n      );\n    }\n\n    const elapsedMs = Date.now() - new Date(ingestedAt).getTime();\n\n    return [{\n      json: {\n        statusCode: 200,\n        body: {\n          doc_id: docId,\n          status: 'indexed',\n          index_latency_ms: elapsedMs,\n          trace_id: traceId,\n          chunks_indexed: vectors.length,\n        },\n      },\n    }];\n  } catch (error) {\n    return [{\n      json: {\n        statusCode: Number(error.statusCode || 500),\n        body: {\n          error: {\n            code: error.code || 'INGEST_FAILED',\n            message: error.message || 'Unexpected ingest processing error',\n            trace_id: traceId,\n            details: error.details || undefined,\n          },\n        },\n      },\n    }];\n  }\n}\n\nreturn run();"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        320
+      ],
+      "id": "76c4f942-21fe-4761-acab-56f7959c3072",
+      "name": "Chunk Embed Upsert"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json.body}}",
+        "options": {
+          "responseCode": "={{$json.statusCode || 200}}"
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1320,
+        320
+      ],
+      "id": "7888635e-a478-4593-a38b-7782bbdf8b04",
+      "name": "Respond Ingest"
+    }
+  ],
+  "connections": {
+    "Webhook Ingest": {
+      "main": [
+        [
+          {
+            "node": "Verify Ingest Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify Ingest Request": {
+      "main": [
+        [
+          {
+            "node": "Request Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Request Valid?": {
+      "main": [
+        [
+          {
+            "node": "Respond Ingest",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Extract PDF Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract PDF Text": {
+      "main": [
+        [
+          {
+            "node": "Chunk Embed Upsert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chunk Embed Upsert": {
+      "main": [
+        [
+          {
+            "node": "Respond Ingest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "staticData": null,
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "active": false
+}

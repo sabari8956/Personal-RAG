@@ -1,0 +1,335 @@
+{
+  "name": "rag_query_deterministic_v1",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "rag-agent-chat",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "0ef1911a-fa14-4df4-bd2c-ce8675d24fdd",
+      "name": "Webhook Query",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        120,
+        280
+      ],
+      "webhookId": "a62ed806-0024-4165-bb94-99aa133edcc6"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "769120cc-15e5-4899-8a02-85530f2f12b6",
+              "name": "query",
+              "value": "={{$json.body?.query || $json.query || $json.body?.message || $json.message || \"\"}}",
+              "type": "string"
+            },
+            {
+              "id": "1a6fbb55-cf72-4aa2-be75-2d42b8c234f7",
+              "name": "session_id",
+              "value": "={{$json.body?.session_id || $json.session_id || $execution.id}}",
+              "type": "string"
+            },
+            {
+              "id": "174c578b-27ec-4145-94a7-62b4d760ab84",
+              "name": "trace_id",
+              "value": "={{$execution.id}}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a1574f34-0dc1-4009-a37c-b3b57133fbfc",
+      "name": "Normalize Input",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        340,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://ollama:11434/api/embeddings",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: \"nomic-embed-text:latest\", prompt: $json.query }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "1271ea63-6c4e-4e29-8dba-225beba9b7a9",
+      "name": "Embed Query",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        560,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "068afd6f-9761-4dae-9290-14693be064e8",
+              "name": "query",
+              "value": "={{$(\"Normalize Input\").item.json.query}}",
+              "type": "string"
+            },
+            {
+              "id": "c954a324-05a4-44e2-a022-8566fca37c31",
+              "name": "session_id",
+              "value": "={{$(\"Normalize Input\").item.json.session_id}}",
+              "type": "string"
+            },
+            {
+              "id": "c1a27e71-d863-4257-8d90-33c2b686f21a",
+              "name": "trace_id",
+              "value": "={{$(\"Normalize Input\").item.json.trace_id}}",
+              "type": "string"
+            },
+            {
+              "id": "8da3ab24-0638-4e94-a451-ea27c6b335bf",
+              "name": "vector",
+              "value": "={{$json.embedding || ($json.data && $json.data[0] && $json.data[0].embedding) || []}}",
+              "type": "array"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "3c62f295-d448-4d24-af80-3f96c5aaeea8",
+      "name": "Prepare Search Payload",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        790,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://qdrant:6333/collections/knowledge_base/points/search",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ vector: $json.vector, limit: 6, with_payload: true, with_vector: false, score_threshold: 0.2 }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "5aeceb9e-6529-44af-aa6a-1e42075dda99",
+      "name": "Search Qdrant",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1020,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const query = $('Prepare Search Payload').item.json.query;\nconst session_id = $('Prepare Search Payload').item.json.session_id;\nconst trace_id = $('Prepare Search Payload').item.json.trace_id;\nconst result = Array.isArray($json.result) ? $json.result : [];\nconst confidence = Number(result[0]?.score || 0);\nconst threshold = 0.72;\nconst mode = confidence >= threshold ? 'grounded' : 'grounded_plus_general';\nconst context = result\n  .map((item, idx) => {\n    const payload = item.payload || {};\n    const text = payload.text || payload.chunk || payload.content || '';\n    if (!text || typeof text !== 'string') return null;\n    return '[' + (idx + 1) + '] ' + text.slice(0, 1600);\n  })\n  .filter(Boolean)\n  .join('\\n\\n');\n\nconst prompt = [\n  'You are a concise RAG assistant for personal and company information.',\n  'Answer ONLY from retrieved context when possible.',\n  'If context is insufficient, say you do not have enough indexed information.',\n  '',\n  'User query:',\n  query,\n  '',\n  'Retrieved context:',\n  context || '(no relevant context)',\n].join('\\n');\n\nreturn [{ json: { query, session_id, trace_id, prompt, confidence, mode } }];"
+      },
+      "id": "74720751-c74e-4b54-af89-f12ef759fcbc",
+      "name": "Build Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1240,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://ollama:11434/api/generate",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: \"qwen2.5:7b\", prompt: $json.prompt, stream: false, options: { temperature: 0.2 } }) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "6aa9cf1f-311c-4825-9157-df9ed4e83697",
+      "name": "Generate Answer",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1460,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "2f6e5e0e-42a4-4e8d-ba4d-8a6b486c34c8",
+              "name": "answer",
+              "value": "={{$json.response || $json.output || \"\"}}",
+              "type": "string"
+            },
+            {
+              "id": "7d5b87f0-9e28-4c8b-b077-00e92c79a486",
+              "name": "mode",
+              "value": "={{$(\"Build Prompt\").item.json.mode}}",
+              "type": "string"
+            },
+            {
+              "id": "ba4de6a8-4f82-41be-b838-9e04471f6003",
+              "name": "confidence",
+              "value": "={{$(\"Build Prompt\").item.json.confidence}}",
+              "type": "number"
+            },
+            {
+              "id": "40d5170d-1d81-4caa-8bb7-33a8e9965d5c",
+              "name": "session_id",
+              "value": "={{$(\"Build Prompt\").item.json.session_id}}",
+              "type": "string"
+            },
+            {
+              "id": "9ddf371a-ae1c-45d5-9d73-da53485762ce",
+              "name": "trace_id",
+              "value": "={{$(\"Build Prompt\").item.json.trace_id}}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "9ecba83b-6326-4762-b403-c9f1da428e83",
+      "name": "Format Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1690,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "17a107c2-7aea-49aa-aff1-f790b90ba07c",
+      "name": "Respond Query",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1910,
+        280
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Query": {
+      "main": [
+        [
+          {
+            "node": "Normalize Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Input": {
+      "main": [
+        [
+          {
+            "node": "Embed Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embed Query": {
+      "main": [
+        [
+          {
+            "node": "Prepare Search Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Search Payload": {
+      "main": [
+        [
+          {
+            "node": "Search Qdrant",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Qdrant": {
+      "main": [
+        [
+          {
+            "node": "Build Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Prompt": {
+      "main": [
+        [
+          {
+            "node": "Generate Answer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Answer": {
+      "main": [
+        [
+          {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Response": {
+      "main": [
+        [
+          {
+            "node": "Respond Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "staticData": null,
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "active": false
+}

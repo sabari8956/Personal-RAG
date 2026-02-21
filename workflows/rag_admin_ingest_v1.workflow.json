@@ -1,0 +1,507 @@
+{
+  "name": "rag_admin_ingest_v1",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "rag-admin-upload",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "7ac682a6-1505-4532-a75c-19712f3b5045",
+      "name": "Webhook Upload",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        140,
+        340
+      ],
+      "webhookId": "5fd35d5e-cc0d-4977-8248-c6119a007f86"
+    },
+    {
+      "parameters": {
+        "operation": "pdf",
+        "binaryPropertyName": "data",
+        "options": {
+          "joinPages": true
+        }
+      },
+      "id": "1c5984d3-4ea0-4c0e-bdfb-fc28a64715d3",
+      "name": "Extract PDF Text",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        380,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "7a38a5da-c9c5-4e59-9052-e9caf2f76423",
+              "name": "text",
+              "value": "={{String($json.text || $json.extractedText || $json.data || \"\").trim()}}",
+              "type": "string"
+            },
+            {
+              "id": "4a802967-9b96-4660-96dd-91eeab4ceacf",
+              "name": "source_type",
+              "value": "={{($json.headers?.[\"x-rag-meta-source_type\"] || $json.headers?.[\"x-rag-meta-source-type\"] || \"mixed\").toString()}}",
+              "type": "string"
+            },
+            {
+              "id": "f5a9d7b8-04e4-4f60-b187-543b4d2f3257",
+              "name": "file_name",
+              "value": "={{($json.headers?.[\"x-rag-meta-file_name\"] || $json.headers?.[\"x-rag-meta-file-name\"] || \"upload.pdf\").toString()}}",
+              "type": "string"
+            },
+            {
+              "id": "15f67d6a-5d54-4e19-867d-dafdecb2d7e1",
+              "name": "doc_id",
+              "value": "={{\"doc_\" + Date.now().toString(36) + \"_\" + Math.random().toString(36).slice(2, 10)}}",
+              "type": "string"
+            },
+            {
+              "id": "e915425c-d232-4603-b278-1017b5b052af",
+              "name": "ingested_at",
+              "value": "={{$now.toISO()}}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "2f48d1a0-9e7d-4619-ada5-fe611602ddf3",
+      "name": "Prepare Metadata",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        620,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "6828847e-1da4-46e7-a1af-211a06bb80c7",
+              "leftValue": "={{($json.text || \"\").length}}",
+              "rightValue": 80,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "db16a5c6-dfc2-4dc3-8dc1-b4a2e05e778a",
+      "name": "Has Usable Text?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        840,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const text = String($json.text || '');\nconst chunkSize = 800;\nconst overlap = 120;\nconst uuid = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {\n  const r = Math.random() * 16 | 0;\n  const v = c === 'x' ? r : (r & 0x3 | 0x8);\n  return v.toString(16);\n});\nconst chunks = [];\nlet start = 0;\nlet chunkIndex = 0;\nwhile (start < text.length) {\n  const end = Math.min(start + chunkSize, text.length);\n  const chunk = text.slice(start, end).trim();\n  if (chunk) {\n    chunks.push({\n      json: {\n        doc_id: $json.doc_id,\n        source_type: $json.source_type,\n        file_name: $json.file_name,\n        ingested_at: $json.ingested_at,\n        chunk_index: chunkIndex,\n        chunk_text: chunk,\n        point_id: uuid(),\n      },\n    });\n    chunkIndex += 1;\n  }\n  if (end >= text.length) break;\n  start = Math.max(0, end - overlap);\n}\nreturn chunks;"
+      },
+      "id": "22dd9838-9498-499b-a2ca-4f98afec1091",
+      "name": "Chunk Text",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1060,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://ollama:11434/api/embeddings",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: \"nomic-embed-text:latest\", prompt: $json.chunk_text }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "97926b30-aec9-46b6-98db-b4e03d9f5aed",
+      "name": "Embed Chunk",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1280,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "16525637-6fd5-4c0c-b808-861b3bdf11e8",
+              "name": "doc_id",
+              "value": "={{$(\"Chunk Text\").item.json.doc_id}}",
+              "type": "string"
+            },
+            {
+              "id": "4046f13c-1c3b-471f-be4e-d962c55d605f",
+              "name": "source_type",
+              "value": "={{$(\"Chunk Text\").item.json.source_type}}",
+              "type": "string"
+            },
+            {
+              "id": "d7885f83-a4c4-40ce-9e2b-095b27a0df7e",
+              "name": "file_name",
+              "value": "={{$(\"Chunk Text\").item.json.file_name}}",
+              "type": "string"
+            },
+            {
+              "id": "e3747d7a-f245-4a31-b5e9-b77d10d96789",
+              "name": "ingested_at",
+              "value": "={{$(\"Chunk Text\").item.json.ingested_at}}",
+              "type": "string"
+            },
+            {
+              "id": "22836f7d-ff15-4754-a346-6566a57f82d5",
+              "name": "chunk_index",
+              "value": "={{$(\"Chunk Text\").item.json.chunk_index}}",
+              "type": "number"
+            },
+            {
+              "id": "05321fd0-3813-4b3c-9cb2-7f11cc37fd0c",
+              "name": "chunk_text",
+              "value": "={{$(\"Chunk Text\").item.json.chunk_text}}",
+              "type": "string"
+            },
+            {
+              "id": "9a3f7eaa-9035-40ad-b8ea-13e09cb6533d",
+              "name": "vector",
+              "value": "={{$json.embedding || ($json.data && $json.data[0] && $json.data[0].embedding) || []}}",
+              "type": "array"
+            },
+            {
+              "id": "a980255a-3882-45f3-a6c2-b04ac8d16328",
+              "name": "point_id",
+              "value": "={{$(\"Chunk Text\").item.json.point_id}}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "7c80c00d-e613-4d6b-87a7-5fdc73d4ea12",
+      "name": "Build Qdrant Point",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1500,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "http://qdrant:6333/collections/knowledge_base/points?wait=true",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ points: [{ id: $json.point_id, vector: $json.vector, payload: { pageContent: $json.chunk_text, metadata: { doc_id: $json.doc_id, source_type: $json.source_type, file_name: $json.file_name, chunk_index: $json.chunk_index, ingested_at: $json.ingested_at, text: $json.chunk_text }, doc_id: $json.doc_id, source_type: $json.source_type, file_name: $json.file_name, chunk_index: $json.chunk_index, text: $json.chunk_text, ingested_at: $json.ingested_at } }] }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "a549dae8-305e-4ab8-a787-f946bc4f4ea6",
+      "name": "Upsert Qdrant Point",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1720,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "options": {}
+      },
+      "id": "afd52ae9-c3b5-491d-b052-74707c335003",
+      "name": "Aggregate Upserts",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        1940,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "bba7e68b-5cdf-4961-b68a-04e22e41ebfd",
+              "name": "doc_id",
+              "value": "={{$(\"Prepare Metadata\").item.json.doc_id}}",
+              "type": "string"
+            },
+            {
+              "id": "cd9843a4-4fce-4df8-8ddd-45ad5c54fe61",
+              "name": "status",
+              "value": "indexed",
+              "type": "string"
+            },
+            {
+              "id": "3c16591e-70fb-427d-bb65-fffdb7c18e6f",
+              "name": "source_type",
+              "value": "={{$(\"Prepare Metadata\").item.json.source_type}}",
+              "type": "string"
+            },
+            {
+              "id": "d6c6555b-8f78-4f1c-b99e-e59be686782d",
+              "name": "file_name",
+              "value": "={{$(\"Prepare Metadata\").item.json.file_name}}",
+              "type": "string"
+            },
+            {
+              "id": "be6e2a90-7d39-490f-896d-ca6af75797bf",
+              "name": "chunks_indexed",
+              "value": "={{$items(\"Chunk Text\").length}}",
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "73c60e3d-1c69-4fc6-ba8e-01f83e8beb26",
+      "name": "Build Upload Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2160,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "7abc33cf-e90f-4859-b36a-3f4242949c44",
+              "name": "error",
+              "value": "UNPROCESSABLE_PDF_TEXT",
+              "type": "string"
+            },
+            {
+              "id": "a77f182a-0108-4c25-9f80-d32b484d47be",
+              "name": "message",
+              "value": "Unable to extract usable text from PDF",
+              "type": "string"
+            },
+            {
+              "id": "3f161a5c-cd70-4907-b747-6d794fc361f0",
+              "name": "status",
+              "value": "rejected",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "3829305e-90be-4c30-b608-8beae643acff",
+      "name": "Build Reject Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1060,
+        460
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "5f7f6707-d106-4317-82dc-65a6e2e21201",
+      "name": "Respond Upload",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        2380,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {
+          "responseCode": 422
+        }
+      },
+      "id": "1d12d436-517a-435f-84e4-2fc2861d91f6",
+      "name": "Respond Upload Rejected",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1280,
+        460
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Upload": {
+      "main": [
+        [
+          {
+            "node": "Extract PDF Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract PDF Text": {
+      "main": [
+        [
+          {
+            "node": "Prepare Metadata",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Metadata": {
+      "main": [
+        [
+          {
+            "node": "Has Usable Text?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Usable Text?": {
+      "main": [
+        [
+          {
+            "node": "Chunk Text",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Reject Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chunk Text": {
+      "main": [
+        [
+          {
+            "node": "Embed Chunk",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embed Chunk": {
+      "main": [
+        [
+          {
+            "node": "Build Qdrant Point",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Qdrant Point": {
+      "main": [
+        [
+          {
+            "node": "Upsert Qdrant Point",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert Qdrant Point": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Upserts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate Upserts": {
+      "main": [
+        [
+          {
+            "node": "Build Upload Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Upload Response": {
+      "main": [
+        [
+          {
+            "node": "Respond Upload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Reject Response": {
+      "main": [
+        [
+          {
+            "node": "Respond Upload Rejected",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "staticData": null,
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "active": false
+}

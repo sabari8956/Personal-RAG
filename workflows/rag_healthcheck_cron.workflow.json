@@ -1,0 +1,61 @@
+{
+  "name": "rag_healthcheck_cron",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        220,
+        280
+      ],
+      "id": "8c70d641-74e2-4e9d-bb4b-bc692e148022",
+      "name": "Every 5 Minutes"
+    },
+    {
+      "parameters": {
+        "jsCode": "async function requestHealth(url, init) {\n  const started = Date.now();\n  try {\n    const response = await fetch(url, init);\n    return {\n      ok: response.ok,\n      status: response.status,\n      latency_ms: Date.now() - started,\n    };\n  } catch (error) {\n    return {\n      ok: false,\n      status: 0,\n      latency_ms: Date.now() - started,\n      error: error.message || 'request failed',\n    };\n  }\n}\n\nasync function run() {\n  const qdrantBase = (process.env.QDRANT_URL || '').replace(/\\/$/, '');\n  const ollamaBase = (process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434').replace(/\\/$/, '');\n  const qdrantCollection = process.env.QDRANT_COLLECTION || 'knowledge_base';\n\n  const qdrantHeaders = {};\n  if (process.env.QDRANT_API_KEY) {\n    qdrantHeaders['api-key'] = process.env.QDRANT_API_KEY;\n  }\n\n  const ollama = await requestHealth(ollamaBase + '/api/tags');\n  const qdrant = qdrantBase\n    ? await requestHealth(qdrantBase + '/collections/' + encodeURIComponent(qdrantCollection), {\n        headers: qdrantHeaders,\n      })\n    : { ok: false, status: 0, latency_ms: 0, error: 'QDRANT_URL not configured' };\n\n  const overall = ollama.ok && qdrant.ok ? 'healthy' : 'degraded';\n\n  return [{\n    json: {\n      status: overall,\n      checked_at: new Date().toISOString(),\n      ollama,\n      qdrant,\n    },\n  }];\n}\n\nreturn run();"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        280
+      ],
+      "id": "2f948a53-9242-474d-b4e3-ef7ec1526b42",
+      "name": "Run Healthcheck"
+    }
+  ],
+  "connections": {
+    "Every 5 Minutes": {
+      "main": [
+        [
+          {
+            "node": "Run Healthcheck",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "staticData": null,
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "active": false
+}
